@@ -102,7 +102,10 @@ import Layout from '../layouts/Layout.astro';
         <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
           <div class="flex justify-between items-center px-4 py-3 bg-slate-950 border-b border-slate-800">
             <span id="gallery-count" class="text-sm font-medium text-slate-400">0 images found</span>
-            <button id="download-images-btn" class="text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg transition-colors">⬇ Download URLs</button>
+            <div class="flex gap-2">
+              <button id="download-zip-btn" class="text-xs font-medium text-purple-400 hover:text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 px-3 py-1.5 rounded-lg transition-colors">⬇ Download All (ZIP)</button>
+              <button id="download-images-btn" class="text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg transition-colors">⬇ Download URLs</button>
+            </div>
           </div>
           <div id="gallery-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 p-4"></div>
           <div id="gallery-pagination" class="flex justify-center items-center gap-2 p-4 border-t border-slate-800"></div>
@@ -155,6 +158,9 @@ import Layout from '../layouts/Layout.astro';
   .gallery-card .overlay span {
     @apply text-[10px] text-white/80 truncate font-mono;
   }
+  .dl-img-btn {
+    @apply shrink-0 ml-2 w-7 h-7 flex items-center justify-center rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs transition-colors backdrop-blur-sm;
+  }
   .page-btn {
     @apply px-3 py-1.5 rounded-lg text-sm font-medium transition-colors;
   }
@@ -179,6 +185,7 @@ import Layout from '../layouts/Layout.astro';
 </style>
 
 <script>
+  declare const JSZip: any;
   let activeMode = 'crawl';
   let currentFilename = 'output.txt';
   let galleryImages: { src: string; alt: string }[] = [];
@@ -301,6 +308,16 @@ import Layout from '../layouts/Layout.astro';
   });
 
   // --- Image Gallery ---
+  const PROXY = 'https://api-scraper.ditoaryap.web.id/proxy-image?url=';
+
+  function getImageName(src: string): string {
+    try {
+      const path = new URL(src).pathname;
+      const name = path.split('/').pop() || 'image';
+      return name.length > 40 ? name.slice(0, 37) + '...' : name;
+    } catch { return 'image.jpg'; }
+  }
+
   function renderGallery() {
     const start = galleryPage * IMAGES_PER_PAGE;
     const pageImages = galleryImages.slice(start, start + IMAGES_PER_PAGE);
@@ -309,11 +326,44 @@ import Layout from '../layouts/Layout.astro';
     pageImages.forEach((img) => {
       const card = document.createElement('div');
       card.className = 'gallery-card';
+      const name = getImageName(img.src);
       card.innerHTML = `
         <img src="${img.src}" alt="${img.alt || ''}" loading="lazy" onerror="this.parentElement.style.display='none'" />
-        <div class="overlay"><span>${img.alt || new URL(img.src).pathname.split('/').pop() || img.src.slice(0,50)}</span></div>
+        <div class="overlay">
+          <span class="flex-1">${img.alt || name}</span>
+          <button class="dl-img-btn" title="Download image">⬇</button>
+        </div>
       `;
-      card.addEventListener('click', () => openLightbox(img.src));
+      const dlBtn = card.querySelector('.dl-img-btn')!;
+
+      // Click card → lightbox (but not if clicking download button)
+      card.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('.dl-img-btn')) return;
+        openLightbox(img.src);
+      });
+
+      // Click download → fetch via proxy and save
+      dlBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const btn = e.currentTarget as HTMLElement;
+        btn.textContent = '⏳';
+        try {
+          const resp = await fetch(PROXY + encodeURIComponent(img.src));
+          const blob = await resp.blob();
+          const ext = blob.type.split('/')[1]?.split(';')[0] || 'jpg';
+          const fname = name.endsWith('.') ? `${name}${ext}` : name;
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = fname;
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          btn.textContent = '✓';
+          setTimeout(() => { btn.textContent = '⬇'; }, 1500);
+        } catch {
+          btn.textContent = '✗';
+          setTimeout(() => { btn.textContent = '⬇'; }, 1500);
+        }
+      });
+
       galleryGrid.appendChild(card);
     });
 
@@ -358,6 +408,50 @@ import Layout from '../layouts/Layout.astro';
     const urls = galleryImages.map(img => img.src).join('\n');
     downloadFile(urls, currentFilename);
     flashBtn(downloadImagesBtn, '✓ Downloaded!');
+  });
+
+  // Download All as ZIP
+  const downloadZipBtn = $('download-zip-btn')! as HTMLButtonElement;
+  downloadZipBtn.addEventListener('click', async () => {
+    if (!galleryImages.length) return;
+    downloadZipBtn.disabled = true;
+    downloadZipBtn.textContent = '⏳ Building ZIP...';
+
+    try {
+      const zip = new JSZip();
+      const total = galleryImages.length;
+      let done = 0;
+
+      // Fetch all images via proxy
+      const promises = galleryImages.map(async (img, idx) => {
+        try {
+          const resp = await fetch(PROXY + encodeURIComponent(img.src));
+          if (!resp.ok) return;
+          const blob = await resp.blob();
+          const ext = blob.type.split('/')[1]?.split(';')[0] || 'jpg';
+          const name = getImageName(img.src);
+          const fname = `${String(idx + 1).padStart(3, '0')}_${name.includes('.') ? name : name + '.' + ext}`;
+          zip.file(fname, blob);
+        } catch {}
+        done++;
+        downloadZipBtn.textContent = `⏳ ${done}/${total}`;
+      });
+
+      await Promise.all(promises);
+      downloadZipBtn.textContent = '⏳ Compressing...';
+
+      const zipBlob = await zip.generateAsync({ type: 'blob' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(zipBlob);
+      a.download = currentFilename.replace('.txt', '.zip');
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+
+      downloadZipBtn.textContent = '✓ Done!';
+      setTimeout(() => { downloadZipBtn.textContent = '⬇ Download All (ZIP)'; downloadZipBtn.disabled = false; }, 2000);
+    } catch {
+      downloadZipBtn.textContent = '✗ Failed';
+      setTimeout(() => { downloadZipBtn.textContent = '⬇ Download All (ZIP)'; downloadZipBtn.disabled = false; }, 2000);
+    }
   });
 
   // --- Design System View ---

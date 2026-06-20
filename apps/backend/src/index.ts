@@ -480,6 +480,34 @@ app.post('/scrape', async (c) => {
   }
 })
 
+// Proxy image download — bypasses CORS for frontend
+app.get('/proxy-image', async (c) => {
+  const imageUrl = c.req.query('url')
+  if (!imageUrl) return c.json({ error: 'url parameter required' }, 400)
+
+  try {
+    const resp = await fetch(imageUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+      redirect: 'follow',
+    })
+    if (!resp.ok) return c.json({ error: `Failed to fetch image: ${resp.status}` }, resp.status as any)
+
+    const contentType = resp.headers.get('content-type') || 'image/jpeg'
+    const buffer = await resp.arrayBuffer()
+
+    return new Response(buffer, {
+      headers: {
+        'Content-Type': contentType,
+        'Content-Length': String(buffer.byteLength),
+        'Access-Control-Allow-Origin': '*',
+        'Cache-Control': 'public, max-age=86400',
+      }
+    })
+  } catch (err: any) {
+    return c.json({ error: err.message || 'Failed to proxy image' }, 500)
+  }
+})
+
 serve({
   fetch: app.fetch,
   port: 3000
