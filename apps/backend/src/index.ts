@@ -1,49 +1,103 @@
 import { serve } from '@hono/node-server'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
+import * as cheerio from 'cheerio'
+import puppeteer from 'puppeteer'
 
 const app = new Hono()
 
 app.use('*', cors())
 
+// Helper to scrape with Headless Chrome (for complex rendering like styleguides)
+async function extractWithPuppeteer(url: string, mode: string) {
+  const browser = await puppeteer.launch({
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  });
+  const page = await browser.newPage();
+  
+  try {
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+    
+    if (mode === 'styleguide' || mode === 'design') {
+      // Inject script to extract fonts and colors
+      const data = await page.evaluate(() => {
+        const colors = new Set<string>();
+        const fonts = new Set<string>();
+        
+        // Walk DOM
+        document.querySelectorAll('*').forEach((el) => {
+          const style = window.getComputedStyle(el);
+          if (style.color && style.color !== 'rgba(0, 0, 0, 0)') colors.add(style.color);
+          if (style.backgroundColor && style.backgroundColor !== 'rgba(0, 0, 0, 0)') colors.add(style.backgroundColor);
+          if (style.fontFamily) fonts.add(style.fontFamily.split(',')[0].replace(/"/g, '').trim());
+        });
+
+        return {
+          colors: Array.from(colors),
+          fonts: Array.from(fonts)
+        };
+      });
+      
+      let markdown = `# Design System / Styleguide for ${url}\n\n## Fonts\n`;
+      data.fonts.forEach(f => markdown += `- ${f}\n`);
+      markdown += `\n## Colors\n`;
+      data.colors.forEach(c => markdown += `- \`${c}\`\n`);
+      
+      return mode === 'design' 
+        ? `# DESIGN.md\n\nGenerated automatically.\n\n${markdown}`
+        : markdown;
+    }
+  } finally {
+    await browser.close();
+  }
+}
+
 app.post('/scrape', async (c) => {
   const body = await c.req.json()
   const { url, mode } = body
 
-  if (!url) {
-    return c.json({ error: 'URL is required' }, 400)
-  }
+  if (!url) return c.json({ error: 'URL is required' }, 400)
 
   try {
-    // 1. Markdown & HTML mode via Jina Reader (Free, Stateless)
+    // 1. Markdown, HTML, Crawl via Jina Reader
     if (mode === 'markdown' || mode === 'html' || mode === 'crawl') {
-      const targetUrl = `https://r.jina.ai/${url}`
-      
       const headers: Record<string, string> = {
         'Accept': mode === 'html' ? 'text/html' : 'text/plain',
       }
-      
-      // Jina specific headers
-      if (mode === 'html') {
-        headers['X-Return-Format'] = 'html'
-      }
+      if (mode === 'html') headers['X-Return-Format'] = 'html'
 
-      const response = await fetch(targetUrl, { headers })
-      const resultText = await response.text()
-      
-      return c.json({ result: resultText })
+      const response = await fetch(`https://r.jina.ai/${url}`, { headers })
+      return c.json({ result: await response.text() })
     }
 
-    // 2. Placeholder for Python IRIS script 
-    if (mode === 'styleguide' || mode === 'design') {
-      // TODO: Spawn Python process to run IRIS
+    // 2. Extract Images via Cheerio (Fast HTML parser)
+    if (mode === 'images') {
+      const htmlResp = await fetch(url)
+      const html = await htmlResp.text()
+      const $ = cheerio.load(html)
+      const images: string[] = []
+      
+      $('img').each((_, el) => {
+        const src = $(el).attr('src')
+        if (src) {
+          try {
+            const absoluteUrl = new URL(src, url).href;
+            images.push(absoluteUrl)
+          } catch (e) {
+            images.push(src)
+          }
+        }
+      })
+      
       return c.json({ 
-        result: `[Mock] Styleguide for ${url} will be extracted here. Backend requires Python+Playwright setup.` 
+        result: `Found ${images.length} images:\n\n` + images.join('\n')
       })
     }
 
-    if (mode === 'images') {
-      return c.json({ result: `[Mock] Image scraping for ${url}.` })
+    // 3. Styleguide and Design MD via Puppeteer (Real browser)
+    if (mode === 'styleguide' || mode === 'design') {
+      const result = await extractWithPuppeteer(url, mode);
+      return c.json({ result });
     }
 
     return c.json({ error: 'Invalid mode' }, 400)
