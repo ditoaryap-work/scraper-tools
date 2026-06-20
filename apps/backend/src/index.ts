@@ -64,7 +64,15 @@ app.post('/scrape', async (c) => {
       const headers: Record<string, string> = {
         'Accept': mode === 'html' ? 'text/html' : 'text/plain',
       }
-      if (mode === 'html') headers['X-Return-Format'] = 'html'
+      if (mode === 'html') {
+        headers['X-Return-Format'] = 'html'
+      }
+      // Crawl mode: deep extraction with extra options
+      if (mode === 'crawl') {
+        headers['X-With-Generated-Alt'] = 'true'
+        headers['X-Wait-For-Selector'] = 'body'
+        headers['X-Timeout'] = '30'
+      }
 
       const response = await fetch(`https://r.jina.ai/${url}`, { headers })
       return c.json({ result: await response.text() })
@@ -76,16 +84,51 @@ app.post('/scrape', async (c) => {
       const html = await htmlResp.text()
       const $ = cheerio.load(html)
       const images: string[] = []
-      
-      $('img').each((_, el) => {
-        const src = $(el).attr('src')
-        if (src) {
-          try {
-            const absoluteUrl = new URL(src, url).href;
+      const seen = new Set<string>()
+
+      // Helper to add unique absolute URLs
+      const addImage = (src: string | undefined) => {
+        if (!src || src.startsWith('data:')) return
+        try {
+          const absoluteUrl = new URL(src, url).href
+          if (!seen.has(absoluteUrl)) {
+            seen.add(absoluteUrl)
             images.push(absoluteUrl)
-          } catch (e) {
+          }
+        } catch (e) {
+          if (!seen.has(src)) {
+            seen.add(src)
             images.push(src)
           }
+        }
+      }
+
+      // Standard <img src>
+      $('img').each((_, el) => {
+        addImage($(el).attr('src'))
+        // Lazy loading attributes
+        addImage($(el).attr('data-src'))
+        addImage($(el).attr('data-lazy-src'))
+        addImage($(el).attr('data-original'))
+        addImage($(el).attr('data-hi-res-src'))
+        // srcset: extract first URL
+        const srcset = $(el).attr('srcset')
+        if (srcset) {
+          srcset.split(',').forEach(entry => {
+            const srcUrl = entry.trim().split(/\s+/)[0]
+            addImage(srcUrl)
+          })
+        }
+      })
+
+      // <source> inside <picture>
+      $('picture source').each((_, el) => {
+        const srcset = $(el).attr('srcset')
+        if (srcset) {
+          srcset.split(',').forEach(entry => {
+            const srcUrl = entry.trim().split(/\s+/)[0]
+            addImage(srcUrl)
+          })
         }
       })
       

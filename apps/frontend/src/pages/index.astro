@@ -108,7 +108,7 @@ import Layout from '../layouts/Layout.astro';
 </style>
 
 <script>
-  let activeMode = 'markdown';
+  let activeMode = 'crawl';
   
   const buttons = document.querySelectorAll('.tool-btn');
   const submitText = document.getElementById('submit-text');
@@ -154,8 +154,19 @@ import Layout from '../layouts/Layout.astro';
       const data = await response.json();
       
       if (resultContainer && resultCode) {
-        resultCode.textContent = data.result || JSON.stringify(data, null, 2);
-        resultContainer.classList.remove('hidden');
+        if (data.error) {
+          // Error state - red styling
+          resultCode.textContent = `⚠ Error: ${data.error}`;
+          resultContainer.classList.remove('hidden');
+          resultContainer.querySelector('.bg-slate-900')?.classList.add('!border-red-500/50');
+          resultContainer.querySelector('#result-code')?.classList.add('!text-red-400');
+        } else {
+          // Success state
+          resultCode.textContent = data.result || JSON.stringify(data, null, 2);
+          resultContainer.classList.remove('hidden');
+          resultContainer.querySelector('.bg-slate-900')?.classList.remove('!border-red-500/50');
+          resultContainer.querySelector('#result-code')?.classList.remove('!text-red-400');
+        }
       }
     } catch (error) {
       alert('Network Error. Ensure the backend server is running.');
