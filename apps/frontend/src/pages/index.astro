@@ -12,7 +12,7 @@ import Layout from '../layouts/Layout.astro';
       </div>
       <div class="flex gap-4 items-center">
         <span class="text-sm font-medium px-3 py-1 bg-slate-800 text-blue-400 rounded-full">100% Free</span>
-        <a href="https://github.com/ditoaryap-work/scraper-tools" target="_blank" class="text-slate-400 hover:text-white transition-colors text-sm font-medium">GitHub</a>
+        <a href="https://github.com/ditoaryap-work/scraper-tools" target="_blank" rel="noopener noreferrer" class="text-slate-400 hover:text-white transition-colors text-sm font-medium">GitHub</a>
       </div>
     </header>
 
@@ -135,7 +135,7 @@ import Layout from '../layouts/Layout.astro';
   </div>
 </Layout>
 
-<style>
+<style is:global>
   @import "../styles/global.css";
   .tool-btn {
     @apply bg-slate-950 border border-slate-800 text-slate-400 p-4 rounded-xl text-left hover:bg-slate-800 hover:border-slate-700 transition-all focus:outline-none focus:ring-2 focus:ring-slate-700;
@@ -242,6 +242,23 @@ import Layout from '../layouts/Layout.astro';
     setTimeout(() => { btn.textContent = orig; }, 2000);
   }
 
+  // --- Security helpers ---
+  function escapeHtml(str: string): string {
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+  }
+
+  function safeUrl(url: string): string {
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) return '';
+      return parsed.href;
+    } catch { return ''; }
+  }
+
+  function isValidHex(hex: string): boolean {
+    return /^#[0-9A-Fa-f]{6}$/.test(hex);
+  }
+
   // Tool selection
   buttons.forEach(btn => {
     btn.addEventListener('click', (e) => {
@@ -261,7 +278,7 @@ import Layout from '../layouts/Layout.astro';
     hideAll();
 
     try {
-      const resp = await fetch('https://api-scraper.ditoaryap.web.id/scrape', {
+      const resp = await fetch('/api/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, mode: activeMode })
@@ -308,7 +325,7 @@ import Layout from '../layouts/Layout.astro';
   });
 
   // --- Image Gallery ---
-  const PROXY = 'https://api-scraper.ditoaryap.web.id/proxy-image?url=';
+  const PROXY = '/api/proxy-image?url=';
 
   function getImageName(src: string): string {
     try {
@@ -327,10 +344,14 @@ import Layout from '../layouts/Layout.astro';
       const card = document.createElement('div');
       card.className = 'gallery-card';
       const name = getImageName(img.src);
+      const safeSrc = safeUrl(img.src);
+      const safeAlt = escapeHtml(img.alt || '');
+      const safeName = escapeHtml(name);
+      if (!safeSrc) return; // skip images with invalid URLs
       card.innerHTML = `
-        <img src="${img.src}" alt="${img.alt || ''}" loading="lazy" onerror="this.parentElement.style.display='none'" />
+        <img src="${safeSrc}" alt="${safeAlt}" loading="lazy" onerror="this.parentElement.style.display='none'" />
         <div class="overlay">
-          <span class="flex-1">${img.alt || name}</span>
+          <span class="flex-1">${safeAlt || safeName}</span>
           <button class="dl-img-btn" title="Download image">⬇</button>
         </div>
       `;
@@ -467,15 +488,16 @@ import Layout from '../layouts/Layout.astro';
 
       html += '<div><h3 class="text-lg font-bold text-white mb-4">🎨 Color Palette</h3>';
       Object.entries(groups).forEach(([group, cols]) => {
-        html += `<h4 class="text-sm font-semibold text-slate-400 mb-3 mt-4 capitalize">${group} Colors</h4>`;
+        html += `<h4 class="text-sm font-semibold text-slate-400 mb-3 mt-4 capitalize">${escapeHtml(group)} Colors</h4>`;
         html += '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">';
         cols.forEach((c: any) => {
+          const hex = isValidHex(c.hex) ? c.hex : '#888888';
           html += `<div class="color-swatch">
-            <div class="preview" style="background:${c.hex}"></div>
+            <div class="preview" style="background:${hex}"></div>
             <div class="info">
-              <div class="text-sm font-mono font-bold text-white">${c.hex}</div>
-              <div class="text-xs text-slate-500 font-mono">${c.rgb}</div>
-              <div class="text-xs text-slate-500 font-mono">${c.hsl}</div>
+              <div class="text-sm font-mono font-bold text-white">${escapeHtml(c.hex || '')}</div>
+              <div class="text-xs text-slate-500 font-mono">${escapeHtml(c.rgb || '')}</div>
+              <div class="text-xs text-slate-500 font-mono">${escapeHtml(c.hsl || '')}</div>
             </div>
           </div>`;
         });
@@ -489,16 +511,19 @@ import Layout from '../layouts/Layout.astro';
       html += '<div><h3 class="text-lg font-bold text-white mb-4">🔤 Typography</h3>';
       fonts.forEach((f: any, i: number) => {
         const role = i === 0 ? 'Primary' : i === 1 ? 'Secondary' : `Fallback ${i}`;
+        const safeFamily = escapeHtml(f.family || 'sans-serif');
+        // Sanitize font-family for CSS: only allow alphanumeric, spaces, hyphens
+        const cssFamily = (f.family || 'sans-serif').replace(/[^a-zA-Z0-9\s\-]/g, '');
         html += `<div class="font-preview mb-4">
           <div class="flex justify-between items-start mb-3">
-            <div><span class="text-white font-bold text-lg" style="font-family:'${f.family}'">${f.family}</span>
+            <div><span class="text-white font-bold text-lg" style="font-family:'${cssFamily}'">${safeFamily}</span>
             <span class="ml-2 text-xs text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full">${role}</span></div>
-            <div class="text-xs text-slate-500">${f.contexts?.join(', ') || ''}</div>
+            <div class="text-xs text-slate-500">${escapeHtml((f.contexts || []).join(', '))}</div>
           </div>
-          <div class="text-2xl text-slate-300 mb-2" style="font-family:'${f.family}'">The quick brown fox jumps over the lazy dog</div>
+          <div class="text-2xl text-slate-300 mb-2" style="font-family:'${cssFamily}'">The quick brown fox jumps over the lazy dog</div>
           <div class="flex flex-wrap gap-2 mt-3">
-            ${(f.weights||[]).map((w: string) => `<span class="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded">Weight: ${w}</span>`).join('')}
-            ${(f.sizes||[]).map((s: string) => `<span class="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded">${s}</span>`).join('')}
+            ${(f.weights||[]).map((w: string) => `<span class="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded">Weight: ${escapeHtml(String(w))}</span>`).join('')}
+            ${(f.sizes||[]).map((s: string) => `<span class="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded">${escapeHtml(String(s))}</span>`).join('')}
           </div>
         </div>`;
       });
@@ -512,9 +537,10 @@ import Layout from '../layouts/Layout.astro';
       html += '<div class="flex flex-wrap gap-2">';
       spacing.forEach((s: string, i: number) => {
         const px = parseFloat(s);
+        if (isNaN(px)) return;
         html += `<div class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-center min-w-[80px]">
           <div class="h-2 bg-blue-500 rounded mb-2" style="width:${Math.min(px, 80)}px;margin:0 auto"></div>
-          <div class="text-xs font-mono text-white">${s}</div>
+          <div class="text-xs font-mono text-white">${escapeHtml(String(s))}</div>
           <div class="text-[10px] text-slate-500">space-${i+1}</div>
         </div>`;
       });

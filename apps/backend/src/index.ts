@@ -3,10 +3,68 @@ import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import * as cheerio from 'cheerio'
 import puppeteer from 'puppeteer'
+import { lookup } from 'dns/promises'
 
 const app = new Hono()
 
 app.use('*', cors())
+
+// --- SSRF Protection ---
+const BLOCKED_CIDRS = [
+  { prefix: '127.', mask: 8 },    // loopback
+  { prefix: '10.', mask: 8 },     // private
+  { prefix: '172.16.', mask: 12 }, // private (172.16-31)
+  { prefix: '192.168.', mask: 16 }, // private
+  { prefix: '169.254.', mask: 16 }, // link-local / cloud metadata
+  { prefix: '0.', mask: 8 },      // current network
+]
+
+function isPrivateIp(ip: string): boolean {
+  if (ip === 'localhost' || ip === '::1' || ip === '0.0.0.0') return true
+  // Check simplified CIDR prefixes
+  for (const cidr of BLOCKED_CIDRS) {
+    if (ip.startsWith(cidr.prefix)) return true
+  }
+  // Also block 172.16.0.0 - 172.31.255.255 range
+  if (ip.startsWith('172.')) {
+    const second = parseInt(ip.split('.')[1])
+    if (second >= 16 && second <= 31) return true
+  }
+  return false
+}
+
+async function validateUrl(urlStr: string): Promise<{ valid: boolean; error?: string }> {
+  try {
+    const parsed = new URL(urlStr)
+    
+    // Only allow http/https
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return { valid: false, error: 'Only HTTP and HTTPS URLs are allowed' }
+    }
+    
+    // Block localhost variants
+    const hostname = parsed.hostname
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '0.0.0.0') {
+      return { valid: false, error: 'Localhost URLs are not allowed' }
+    }
+    
+    // DNS lookup to resolve hostname and check for private IPs
+    try {
+      const addresses = await lookup(hostname, { all: true })
+      for (const addr of addresses) {
+        if (isPrivateIp(addr.address)) {
+          return { valid: false, error: 'Access to private/internal networks is not allowed' }
+        }
+      }
+    } catch {
+      // DNS resolution failed — let the actual fetch/puppeteer handle the error
+    }
+    
+    return { valid: true }
+  } catch {
+    return { valid: false, error: 'Invalid URL format' }
+  }
+}
 
 // --- Color conversion helpers ---
 function parseColor(color: string): { hex: string; rgb: string; hsl: string } | null {
@@ -60,9 +118,10 @@ function categorizeColor(color: string, context: string): 'text' | 'background' 
 
 // --- Puppeteer extraction (enhanced) ---
 async function extractWithPuppeteer(url: string, mode: string) {
-  const browser = await puppeteer.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
-  })
+  const args = process.env.DOCKER || process.env.CI
+    ? ['--no-sandbox', '--disable-setuid-sandbox']
+    : []
+  const browser = await puppeteer.launch({ args })
   const page = await browser.newPage()
 
   try {
@@ -367,6 +426,10 @@ app.post('/scrape', async (c) => {
 
   if (!url) return c.json({ error: 'URL is required' }, 400)
 
+  // SSRF validation
+  const validation = await validateUrl(url)
+  if (!validation.valid) return c.json({ error: validation.error }, 400)
+
   try {
     // 1. Markdown, HTML, Crawl via Jina Reader
     if (mode === 'markdown' || mode === 'html' || mode === 'crawl') {
@@ -475,8 +538,8 @@ app.post('/scrape', async (c) => {
     return c.json({ error: 'Invalid mode' }, 400)
 
   } catch (error: any) {
-    console.error(error)
-    return c.json({ error: error.message || 'Failed to scrape' }, 500)
+    console.error('[scrape error]', error)
+    return c.json({ error: 'Internal server error' }, 500)
   }
 })
 
@@ -485,12 +548,16 @@ app.get('/proxy-image', async (c) => {
   const imageUrl = c.req.query('url')
   if (!imageUrl) return c.json({ error: 'url parameter required' }, 400)
 
+  // SSRF validation for proxy
+  const validation = await validateUrl(imageUrl)
+  if (!validation.valid) return c.json({ error: validation.error }, 400)
+
   try {
     const resp = await fetch(imageUrl, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
-      redirect: 'follow',
+      redirect: 'manual',  // Don't follow redirects to prevent SSRF bypass via redirect
     })
-    if (!resp.ok) return c.json({ error: `Failed to fetch image: ${resp.status}` }, resp.status as any)
+    if (!resp.ok) return c.json({ error: 'Failed to fetch image' }, resp.status as any)
 
     const contentType = resp.headers.get('content-type') || 'image/jpeg'
     const buffer = await resp.arrayBuffer()
@@ -504,7 +571,8 @@ app.get('/proxy-image', async (c) => {
       }
     })
   } catch (err: any) {
-    return c.json({ error: err.message || 'Failed to proxy image' }, 500)
+    console.error('[proxy-image error]', err)
+    return c.json({ error: 'Failed to proxy image' }, 500)
   }
 })
 

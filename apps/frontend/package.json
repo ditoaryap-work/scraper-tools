@@ -17,5 +17,8 @@
   },
   "devDependencies": {
     "typescript": "^5.7.3"
+  },
+  "optionalDependencies": {
+    "@tailwindcss/oxide-darwin-arm64": "^4.3.1"
   }
 }
