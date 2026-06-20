@@ -78,7 +78,7 @@ import Layout from '../layouts/Layout.astro';
 
       </div>
 
-      <!-- Result Area -->
+      <!-- Result Area (Text modes: crawl, markdown, html) -->
       <div id="result-container" class="mt-8 hidden">
         <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
           <div class="flex justify-between items-center px-4 py-3 bg-slate-950 border-b border-slate-800">
@@ -96,6 +96,38 @@ import Layout from '../layouts/Layout.astro';
           <pre class="p-6 overflow-x-auto text-sm font-mono text-slate-300 max-h-[600px] overflow-y-auto leading-relaxed"><code id="result-code"></code></pre>
         </div>
       </div>
+
+      <!-- Image Gallery -->
+      <div id="gallery-container" class="mt-8 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+          <div class="flex justify-between items-center px-4 py-3 bg-slate-950 border-b border-slate-800">
+            <span id="gallery-count" class="text-sm font-medium text-slate-400">0 images found</span>
+            <button id="download-images-btn" class="text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg transition-colors">⬇ Download URLs</button>
+          </div>
+          <div id="gallery-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 p-4"></div>
+          <div id="gallery-pagination" class="flex justify-center items-center gap-2 p-4 border-t border-slate-800"></div>
+        </div>
+      </div>
+
+      <!-- Lightbox -->
+      <div id="lightbox" class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center hidden cursor-zoom-out" onclick="this.classList.add('hidden')">
+        <img id="lightbox-img" class="max-w-[90vw] max-h-[90vh] object-contain rounded-lg shadow-2xl" />
+      </div>
+
+      <!-- Design System View -->
+      <div id="design-container" class="mt-8 hidden">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+          <div class="flex justify-between items-center px-4 py-3 bg-slate-950 border-b border-slate-800">
+            <span class="text-sm font-medium text-slate-400">🎨 Design System</span>
+            <div class="flex gap-2">
+              <button id="dl-design-md" class="text-xs font-medium text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 hover:bg-emerald-500/20 px-3 py-1.5 rounded-lg transition-colors">⬇ DESIGN.md</button>
+              <button id="dl-css-tokens" class="text-xs font-medium text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 px-3 py-1.5 rounded-lg transition-colors">⬇ tokens.css</button>
+              <button id="dl-tailwind" class="text-xs font-medium text-purple-400 hover:text-purple-300 bg-purple-500/10 hover:bg-purple-500/20 px-3 py-1.5 rounded-lg transition-colors">⬇ tailwind.config</button>
+            </div>
+          </div>
+          <div id="design-content" class="p-6 space-y-8 max-h-[700px] overflow-y-auto"></div>
+        </div>
+      </div>
     </main>
   </div>
 </Layout>
@@ -108,135 +140,315 @@ import Layout from '../layouts/Layout.astro';
   .tool-btn.active {
     @apply bg-blue-500/10 border-blue-500/50 text-blue-400 shadow-inner;
   }
+  .gallery-card {
+    @apply relative group rounded-xl overflow-hidden bg-slate-950 border border-slate-800 aspect-square cursor-pointer transition-all hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-900/10;
+  }
+  .gallery-card img {
+    @apply w-full h-full object-cover transition-transform duration-300;
+  }
+  .gallery-card:hover img { transform: scale(1.05); }
+  .gallery-card .overlay {
+    @apply absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2;
+  }
+  .gallery-card .overlay span {
+    @apply text-[10px] text-white/80 truncate font-mono;
+  }
+  .page-btn {
+    @apply px-3 py-1.5 rounded-lg text-sm font-medium transition-colors;
+  }
+  .page-btn.active {
+    @apply bg-blue-600 text-white;
+  }
+  .page-btn:not(.active) {
+    @apply bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white;
+  }
+  .color-swatch {
+    @apply rounded-xl overflow-hidden border border-slate-800;
+  }
+  .color-swatch .preview {
+    @apply h-16 w-full;
+  }
+  .color-swatch .info {
+    @apply p-3 bg-slate-950 space-y-1;
+  }
+  .font-preview {
+    @apply bg-slate-950 border border-slate-800 rounded-xl p-4;
+  }
 </style>
 
 <script>
   let activeMode = 'crawl';
   let lastUrl = '';
   let currentFilename = 'output.txt';
-  
+  let galleryImages: { src: string; alt: string }[] = [];
+  let galleryPage = 0;
+  const IMAGES_PER_PAGE = 12;
+  let designData: any = null;
+
+  const $ = (id: string) => document.getElementById(id);
   const buttons = document.querySelectorAll('.tool-btn');
-  const submitText = document.getElementById('submit-text');
-  const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement;
-  const urlInput = document.getElementById('url-input') as HTMLInputElement;
-  const resultContainer = document.getElementById('result-container');
-  const resultCode = document.getElementById('result-code');
-  const copyBtn = document.getElementById('copy-btn');
-  const downloadBtn = document.getElementById('download-btn');
-  const outputFilename = document.getElementById('output-filename');
+  const submitText = $('submit-text')!;
+  const submitBtn = $('submit-btn') as HTMLButtonElement;
+  const urlInput = $('url-input') as HTMLInputElement;
+  const resultContainer = $('result-container')!;
+  const resultCode = $('result-code')!;
+  const copyBtn = $('copy-btn')!;
+  const downloadBtn = $('download-btn')!;
+  const outputFilename = $('output-filename')!;
+  const galleryContainer = $('gallery-container')!;
+  const galleryGrid = $('gallery-grid')!;
+  const galleryCount = $('gallery-count')!;
+  const galleryPagination = $('gallery-pagination')!;
+  const downloadImagesBtn = $('download-images-btn')!;
+  const designContainer = $('design-container')!;
+  const designContent = $('design-content')!;
 
-  // File extension mapping per mode
-  const modeExtensions: Record<string, string> = {
-    crawl: 'md',
-    markdown: 'md',
-    html: 'html',
-    images: 'txt',
-    styleguide: 'md',
-    design: 'md',
-  };
-
-  // Generate proper filename: {mode}_{domain}_{YYYY-MM-DD}.{ext}
-  function generateFilename(url: string, mode: string): string {
-    let domain = 'unknown';
-    try {
-      domain = new URL(url).hostname.replace(/^www\./, '').replace(/[^a-zA-Z0-9.-]/g, '_');
-    } catch { domain = 'unknown'; }
-    
-    const date = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-    const ext = modeExtensions[mode] || 'txt';
-    const prefix = mode === 'design' ? 'DESIGN' : mode;
-    
-    return `${prefix}_${domain}_${date}.${ext}`;
+  function hideAll() {
+    resultContainer.classList.add('hidden');
+    galleryContainer.classList.add('hidden');
+    designContainer.classList.add('hidden');
   }
 
-  // Handle Tool Selection
+  const modeExt: Record<string, string> = { crawl:'md', markdown:'md', html:'html', images:'txt', styleguide:'md', design:'md' };
+
+  function genFilename(url: string, mode: string): string {
+    let domain = 'unknown';
+    try { domain = new URL(url).hostname.replace(/^www\./,'').replace(/[^a-zA-Z0-9.-]/g,'_'); } catch {}
+    const date = new Date().toISOString().split('T')[0];
+    const prefix = mode === 'design' ? 'DESIGN' : mode;
+    return `${prefix}_${domain}_${date}.${modeExt[mode]||'txt'}`;
+  }
+
+  function downloadFile(content: string, filename: string, type = 'text/plain') {
+    const blob = new Blob([content], { type: `${type};charset=utf-8` });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  }
+
+  function flashBtn(btn: HTMLElement, text: string) {
+    const orig = btn.textContent;
+    btn.textContent = text;
+    setTimeout(() => { btn.textContent = orig; }, 2000);
+  }
+
+  // Tool selection
   buttons.forEach(btn => {
     btn.addEventListener('click', (e) => {
-      const target = e.currentTarget as HTMLButtonElement;
       buttons.forEach(b => b.classList.remove('active'));
-      target.classList.add('active');
-      activeMode = target.dataset.mode || 'crawl';
+      (e.currentTarget as HTMLElement).classList.add('active');
+      activeMode = (e.currentTarget as HTMLButtonElement).dataset.mode || 'crawl';
     });
   });
 
-  // Handle Form Submit
-  submitBtn?.addEventListener('click', async () => {
-    const url = urlInput?.value.trim();
-    if (!url) {
-      alert('Please enter a valid URL');
-      return;
-    }
+  // Submit
+  submitBtn.addEventListener('click', async () => {
+    const url = urlInput.value.trim();
+    if (!url) { alert('Please enter a valid URL'); return; }
 
     submitBtn.disabled = true;
-    submitText!.textContent = 'Extracting...';
-    if (resultContainer) resultContainer.classList.add('hidden');
+    submitText.textContent = 'Extracting...';
+    hideAll();
 
     try {
-      const response = await fetch(`https://api-scraper.ditoaryap.web.id/scrape`, {
+      const resp = await fetch('https://api-scraper.ditoaryap.web.id/scrape', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, mode: activeMode })
       });
+      const data = await resp.json();
+      lastUrl = url;
+      currentFilename = genFilename(url, activeMode);
 
-      const data = await response.json();
-      
-      if (resultContainer && resultCode) {
-        if (data.error) {
-          resultCode.textContent = `⚠ Error: ${data.error}`;
-          resultContainer.classList.remove('hidden');
-          resultContainer.querySelector('.bg-slate-900')?.classList.add('!border-red-500/50');
-          resultContainer.querySelector('#result-code')?.classList.add('!text-red-400');
-          currentFilename = 'error.txt';
-        } else {
-          resultCode.textContent = data.result || JSON.stringify(data, null, 2);
-          resultContainer.classList.remove('hidden');
-          resultContainer.querySelector('.bg-slate-900')?.classList.remove('!border-red-500/50');
-          resultContainer.querySelector('#result-code')?.classList.remove('!text-red-400');
-          
-          // Generate and set filename
-          lastUrl = url;
-          currentFilename = generateFilename(url, activeMode);
-        }
-        // Update filename label
-        if (outputFilename) outputFilename.textContent = currentFilename;
+      if (data.error) {
+        resultCode.textContent = `⚠ Error: ${data.error}`;
+        resultContainer.classList.remove('hidden');
+        return;
       }
-    } catch (error) {
-      alert('Network Error. Ensure the backend server is running.');
+
+      // --- IMAGES mode: gallery view ---
+      if (data.type === 'images' && data.images) {
+        galleryImages = data.images;
+        galleryPage = 0;
+        galleryCount.textContent = `${data.count} images found`;
+        renderGallery();
+        galleryContainer.classList.remove('hidden');
+        return;
+      }
+
+      // --- DESIGN / STYLEGUIDE mode: visual view ---
+      if (data.type === 'design' || data.type === 'styleguide') {
+        designData = data;
+        renderDesign(data);
+        designContainer.classList.remove('hidden');
+        return;
+      }
+
+      // --- TEXT modes: code block ---
+      const text = data.result || JSON.stringify(data, null, 2);
+      resultCode.textContent = text;
+      if (outputFilename) outputFilename.textContent = currentFilename;
+      resultContainer.classList.remove('hidden');
+
+    } catch (err) {
+      alert('Network Error. Check your connection and try again.');
     } finally {
       submitBtn.disabled = false;
-      submitText!.textContent = 'Extract Data';
+      submitText.textContent = 'Extract Data';
     }
   });
 
-  // Handle Copy
-  copyBtn?.addEventListener('click', () => {
-    if (resultCode?.textContent) {
-      navigator.clipboard.writeText(resultCode.textContent);
-      const originalText = copyBtn.textContent;
-      copyBtn.textContent = 'Copied!';
-      setTimeout(() => { copyBtn.textContent = originalText; }, 2000);
-    }
+  // --- Image Gallery ---
+  function renderGallery() {
+    const start = galleryPage * IMAGES_PER_PAGE;
+    const pageImages = galleryImages.slice(start, start + IMAGES_PER_PAGE);
+    galleryGrid.innerHTML = '';
+
+    pageImages.forEach((img, i) => {
+      const card = document.createElement('div');
+      card.className = 'gallery-card';
+      card.innerHTML = `
+        <img src="${img.src}" alt="${img.alt || ''}" loading="lazy" onerror="this.parentElement.style.display='none'" />
+        <div class="overlay"><span>${img.alt || new URL(img.src).pathname.split('/').pop() || img.src.slice(0,50)}</span></div>
+      `;
+      card.addEventListener('click', () => openLightbox(img.src));
+      galleryGrid.appendChild(card);
+    });
+
+    renderPagination();
+  }
+
+  function renderPagination() {
+    const totalPages = Math.ceil(galleryImages.length / IMAGES_PER_PAGE);
+    galleryPagination.innerHTML = '';
+    if (totalPages <= 1) return;
+
+    const mkBtn = (label: string, page: number, disabled = false) => {
+      const btn = document.createElement('button');
+      btn.className = `page-btn ${page === galleryPage ? 'active' : ''}`;
+      btn.textContent = label;
+      btn.disabled = disabled;
+      if (!disabled) btn.addEventListener('click', () => { galleryPage = page; renderGallery(); });
+      return btn;
+    };
+
+    galleryPagination.appendChild(mkBtn('←', galleryPage - 1, galleryPage === 0));
+
+    const maxVisible = 7;
+    let startP = Math.max(0, galleryPage - Math.floor(maxVisible / 2));
+    let endP = Math.min(totalPages, startP + maxVisible);
+    if (endP - startP < maxVisible) startP = Math.max(0, endP - maxVisible);
+
+    if (startP > 0) { galleryPagination.appendChild(mkBtn('1', 0)); if (startP > 1) galleryPagination.appendChild(Object.assign(document.createElement('span'), { textContent: '...', className: 'text-slate-600 px-1' })); }
+    for (let i = startP; i < endP; i++) galleryPagination.appendChild(mkBtn(`${i+1}`, i));
+    if (endP < totalPages) { if (endP < totalPages - 1) galleryPagination.appendChild(Object.assign(document.createElement('span'), { textContent: '...', className: 'text-slate-600 px-1' })); galleryPagination.appendChild(mkBtn(`${totalPages}`, totalPages - 1)); }
+
+    galleryPagination.appendChild(mkBtn('→', galleryPage + 1, galleryPage === totalPages - 1));
+  }
+
+  function openLightbox(src: string) {
+    const lb = $('lightbox')!;
+    ($('lightbox-img') as HTMLImageElement).src = src;
+    lb.classList.remove('hidden');
+  }
+
+  downloadImagesBtn.addEventListener('click', () => {
+    const urls = galleryImages.map(img => img.src).join('\n');
+    downloadFile(urls, currentFilename);
+    flashBtn(downloadImagesBtn, '✓ Downloaded!');
   });
 
-  // Handle Download
-  downloadBtn?.addEventListener('click', () => {
-    if (!resultCode?.textContent) return;
-    
-    const content = resultCode.textContent;
-    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-    const blobUrl = URL.createObjectURL(blob);
-    
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = currentFilename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(blobUrl);
-    
-    // Visual feedback
-    const originalText = downloadBtn.textContent;
-    downloadBtn.textContent = '✓ Downloaded!';
-    setTimeout(() => { downloadBtn.textContent = originalText; }, 2000);
+  // --- Design System View ---
+  function renderDesign(data: any) {
+    const colors = data.data?.colors || data.colors || [];
+    const fonts = data.data?.fonts || data.fonts || [];
+    let html = '';
+
+    // Colors section
+    if (colors.length) {
+      const groups: Record<string, typeof colors> = {};
+      colors.forEach((c: any) => { const cat = c.category || 'accent'; if (!groups[cat]) groups[cat] = []; groups[cat].push(c); });
+
+      html += '<div><h3 class="text-lg font-bold text-white mb-4">🎨 Color Palette</h3>';
+      Object.entries(groups).forEach(([group, cols]) => {
+        html += `<h4 class="text-sm font-semibold text-slate-400 mb-3 mt-4 capitalize">${group} Colors</h4>`;
+        html += '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">';
+        cols.forEach((c: any) => {
+          html += `<div class="color-swatch">
+            <div class="preview" style="background:${c.hex}"></div>
+            <div class="info">
+              <div class="text-sm font-mono font-bold text-white">${c.hex}</div>
+              <div class="text-xs text-slate-500 font-mono">${c.rgb}</div>
+              <div class="text-xs text-slate-500 font-mono">${c.hsl}</div>
+            </div>
+          </div>`;
+        });
+        html += '</div>';
+      });
+      html += '</div>';
+    }
+
+    // Typography section
+    if (fonts.length) {
+      html += '<div><h3 class="text-lg font-bold text-white mb-4">🔤 Typography</h3>';
+      fonts.forEach((f: any, i: number) => {
+        const role = i === 0 ? 'Primary' : i === 1 ? 'Secondary' : `Fallback ${i}`;
+        html += `<div class="font-preview mb-4">
+          <div class="flex justify-between items-start mb-3">
+            <div><span class="text-white font-bold text-lg" style="font-family:'${f.family}'">${f.family}</span>
+            <span class="ml-2 text-xs text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-full">${role}</span></div>
+            <div class="text-xs text-slate-500">${f.contexts?.join(', ') || ''}</div>
+          </div>
+          <div class="text-2xl text-slate-300 mb-2" style="font-family:'${f.family}'">The quick brown fox jumps over the lazy dog</div>
+          <div class="flex flex-wrap gap-2 mt-3">
+            ${(f.weights||[]).map((w: string) => `<span class="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded">Weight: ${w}</span>`).join('')}
+            ${(f.sizes||[]).map((s: string) => `<span class="text-xs bg-slate-800 text-slate-400 px-2 py-1 rounded">${s}</span>`).join('')}
+          </div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+
+    // Spacing section
+    const spacing = data.data?.spacing || data.spacing || [];
+    if (spacing.length) {
+      html += '<div><h3 class="text-lg font-bold text-white mb-4">📏 Spacing</h3>';
+      html += '<div class="flex flex-wrap gap-2">';
+      spacing.forEach((s: string, i: number) => {
+        const px = parseFloat(s);
+        html += `<div class="bg-slate-950 border border-slate-800 rounded-lg p-3 text-center min-w-[80px]">
+          <div class="h-2 bg-blue-500 rounded mb-2" style="width:${Math.min(px, 80)}px;margin:0 auto"></div>
+          <div class="text-xs font-mono text-white">${s}</div>
+          <div class="text-[10px] text-slate-500">space-${i+1}</div>
+        </div>`;
+      });
+      html += '</div></div>';
+    }
+
+    designContent.innerHTML = html;
+  }
+
+  // Design download buttons
+  $('dl-design-md')!.addEventListener('click', () => {
+    if (designData?.markdown) downloadFile(designData.markdown, currentFilename);
+    flashBtn($('dl-design-md')!, '✓ Done!');
+  });
+  $('dl-css-tokens')!.addEventListener('click', () => {
+    if (designData?.cssTokens) downloadFile(designData.cssTokens, currentFilename.replace('.md', '.css'));
+    flashBtn($('dl-css-tokens')!, '✓ Done!');
+  });
+  $('dl-tailwind')!.addEventListener('click', () => {
+    if (designData?.tailwindConfig) downloadFile(designData.tailwindConfig, 'tailwind.config.js');
+    flashBtn($('dl-tailwind')!, '✓ Done!');
+  });
+
+  // Copy & Download (text modes)
+  copyBtn.addEventListener('click', () => {
+    if (resultCode.textContent) { navigator.clipboard.writeText(resultCode.textContent); flashBtn(copyBtn, '✓ Copied!'); }
+  });
+  downloadBtn.addEventListener('click', () => {
+    if (resultCode.textContent) { downloadFile(resultCode.textContent, currentFilename); flashBtn(downloadBtn, '✓ Downloaded!'); }
   });
 </script>
