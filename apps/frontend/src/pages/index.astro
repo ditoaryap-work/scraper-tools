@@ -1,17 +1,136 @@
 ---
-
+import Layout from '../layouts/Layout.astro';
 ---
 
-<html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
-</html>
+<Layout title="Sugi Tools Clone">
+  <div class="max-w-3xl mx-auto px-4 py-12">
+    <!-- Header -->
+    <header class="flex justify-between items-center mb-16">
+      <h1 class="text-xl font-medium tracking-tight">Sugi Tools Clone</h1>
+      <button class="bg-[#22c55e] hover:bg-[#16a34a] text-black font-semibold py-1.5 px-4 rounded transition-colors text-sm">
+        Login
+      </button>
+    </header>
+
+    <!-- Hero -->
+    <main>
+      <div class="mb-12">
+        <h2 class="text-5xl font-semibold tracking-tighter mb-4">From web to workflow, in one click.</h2>
+        <p class="text-zinc-400 text-lg">Extract content, code, or design systems instantly.</p>
+      </div>
+
+      <!-- Tools Grid -->
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-8" id="tools-grid">
+        <button class="tool-btn active" data-mode="crawl">Crawl Website</button>
+        <button class="tool-btn" data-mode="design">Create Design MD</button>
+        <button class="tool-btn" data-mode="markdown">Scrape Markdown</button>
+        <button class="tool-btn" data-mode="html">Scrape HTML</button>
+        <button class="tool-btn" data-mode="images">Scrape Images</button>
+        <button class="tool-btn" data-mode="styleguide">Extract Styleguide</button>
+      </div>
+
+      <!-- Input Area -->
+      <div class="relative mb-4">
+        <input 
+          type="text" 
+          id="url-input"
+          class="w-full bg-[#1c1c1c] border border-zinc-800 rounded-lg py-4 px-4 text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors"
+          placeholder="example.com/landing"
+        />
+      </div>
+
+      <button 
+        id="submit-btn"
+        class="w-full bg-[#22c55e] hover:bg-[#16a34a] disabled:opacity-50 disabled:cursor-not-allowed text-black font-medium py-3 px-4 rounded-lg transition-colors text-center"
+      >
+        Send (1 credit) — <span id="submit-text">Crawl Website</span>
+      </button>
+
+      <!-- Result Area -->
+      <div id="result-container" class="mt-8 hidden">
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="text-sm font-medium text-zinc-400">Result:</h3>
+          <button id="copy-btn" class="text-xs text-zinc-500 hover:text-white">Copy</button>
+        </div>
+        <pre class="bg-[#1c1c1c] border border-zinc-800 rounded-lg p-4 overflow-x-auto text-sm text-zinc-300 max-h-[500px] overflow-y-auto"><code id="result-code"></code></pre>
+      </div>
+    </main>
+  </div>
+</Layout>
+
+<style>
+  .tool-btn {
+    @apply bg-[#1c1c1c] border border-zinc-800 text-zinc-300 py-3 px-4 rounded-lg text-sm text-left hover:bg-zinc-800 transition-colors;
+  }
+  .tool-btn.active {
+    @apply bg-[#22c55e]/10 border-[#22c55e]/50 text-[#22c55e];
+  }
+</style>
+
+<script>
+  let activeMode = 'crawl';
+  
+  const buttons = document.querySelectorAll('.tool-btn');
+  const submitText = document.getElementById('submit-text');
+  const submitBtn = document.getElementById('submit-btn') as HTMLButtonElement;
+  const urlInput = document.getElementById('url-input') as HTMLInputElement;
+  const resultContainer = document.getElementById('result-container');
+  const resultCode = document.getElementById('result-code');
+  const copyBtn = document.getElementById('copy-btn');
+
+  // Handle Tool Selection
+  buttons.forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const target = e.currentTarget as HTMLButtonElement;
+      
+      // Update active state
+      buttons.forEach(b => b.classList.remove('active'));
+      target.classList.add('active');
+      
+      // Update state & button text
+      activeMode = target.dataset.mode || 'crawl';
+      if (submitText) submitText.textContent = target.textContent;
+    });
+  });
+
+  // Handle Form Submit
+  submitBtn?.addEventListener('click', async () => {
+    const url = urlInput?.value.trim();
+    if (!url) return alert('Please enter a URL');
+
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = 'Processing...';
+    if (resultContainer) resultContainer.classList.add('hidden');
+
+    try {
+      // Call our backend API which proxies to Jina/Python
+      const response = await fetch(`/api/scrape`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, mode: activeMode })
+      });
+
+      const data = await response.json();
+      
+      if (resultContainer && resultCode) {
+        resultCode.textContent = data.result || JSON.stringify(data, null, 2);
+        resultContainer.classList.remove('hidden');
+      }
+    } catch (error) {
+      alert('Error: ' + error);
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = `Send (1 credit) — <span id="submit-text">${document.querySelector('.tool-btn.active')?.textContent}</span>`;
+    }
+  });
+
+  // Handle Copy
+  copyBtn?.addEventListener('click', () => {
+    if (resultCode?.textContent) {
+      navigator.clipboard.writeText(resultCode.textContent);
+      const originalText = copyBtn.textContent;
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = originalText; }, 2000);
+    }
+  });
+</script>
