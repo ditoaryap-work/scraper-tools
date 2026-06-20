@@ -69,28 +69,43 @@ app.post('/scrape', async (c) => {
       }
       // Crawl mode: deep extraction with extra options
       if (mode === 'crawl') {
-        headers['X-With-Generated-Alt'] = 'true'
-        headers['X-Wait-For-Selector'] = 'body'
-        headers['X-Timeout'] = '30'
+        headers['X-No-Cache'] = 'true'
+        headers['X-With-Links-Summary'] = 'true'
+        headers['X-With-Images-Summary'] = 'true'
       }
 
       const response = await fetch(`https://r.jina.ai/${url}`, { headers })
       return c.json({ result: await response.text() })
     }
 
-    // 2. Extract Images via Cheerio (Fast HTML parser)
+    // 2. Extract Images via Jina Reader HTML + Cheerio
+    //    Uses Jina Reader as proxy to bypass 403/bot detection and get rendered HTML
     if (mode === 'images') {
-      const htmlResp = await fetch(url)
+      const htmlResp = await fetch(`https://r.jina.ai/${url}`, {
+        headers: {
+          'Accept': 'text/html',
+          'X-Return-Format': 'html',
+          'X-With-Images-Summary': 'true',
+        }
+      })
       const html = await htmlResp.text()
+      
+      // Check if Jina returned an error (non-HTML response)
+      if (!html.includes('<')) {
+        return c.json({ error: `Failed to fetch HTML: ${html.substring(0, 200)}` }, 502)
+      }
+      
       const $ = cheerio.load(html)
       const images: string[] = []
       const seen = new Set<string>()
 
       // Helper to add unique absolute URLs
       const addImage = (src: string | undefined) => {
-        if (!src || src.startsWith('data:')) return
+        if (!src || src.startsWith('data:') || src.length < 5) return
         try {
           const absoluteUrl = new URL(src, url).href
+          // Filter out tracking pixels, icons, and tiny images
+          if (absoluteUrl.includes('1x1') || absoluteUrl.includes('pixel') || absoluteUrl.includes('spacer')) return
           if (!seen.has(absoluteUrl)) {
             seen.add(absoluteUrl)
             images.push(absoluteUrl)
@@ -111,7 +126,8 @@ app.post('/scrape', async (c) => {
         addImage($(el).attr('data-lazy-src'))
         addImage($(el).attr('data-original'))
         addImage($(el).attr('data-hi-res-src'))
-        // srcset: extract first URL
+        addImage($(el).attr('data-srcset'))
+        // srcset: extract all URLs
         const srcset = $(el).attr('srcset')
         if (srcset) {
           srcset.split(',').forEach(entry => {
@@ -130,6 +146,18 @@ app.post('/scrape', async (c) => {
             addImage(srcUrl)
           })
         }
+      })
+      
+      // Background images from inline styles
+      $('[style]').each((_, el) => {
+        const style = $(el).attr('style') || ''
+        const bgMatch = style.match(/url\(['"]?([^'")\s]+)['"]?\)/)
+        if (bgMatch) addImage(bgMatch[1])
+      })
+
+      // og:image and meta images
+      $('meta[property="og:image"], meta[name="twitter:image"]').each((_, el) => {
+        addImage($(el).attr('content'))
       })
       
       return c.json({ 
