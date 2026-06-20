@@ -141,15 +141,17 @@ import Layout from '../layouts/Layout.astro';
     @apply bg-blue-500/10 border-blue-500/50 text-blue-400 shadow-inner;
   }
   .gallery-card {
-    @apply relative group rounded-xl overflow-hidden bg-slate-950 border border-slate-800 aspect-square cursor-pointer transition-all hover:border-blue-500/50 hover:shadow-lg hover:shadow-blue-900/10;
+    @apply relative rounded-xl overflow-hidden bg-slate-950 border border-slate-800 aspect-square cursor-pointer transition-all hover:border-blue-500/50 hover:shadow-lg;
   }
   .gallery-card img {
     @apply w-full h-full object-cover transition-transform duration-300;
   }
   .gallery-card:hover img { transform: scale(1.05); }
   .gallery-card .overlay {
-    @apply absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-2;
+    @apply absolute inset-0 flex items-end p-2 opacity-0 transition-opacity;
+    background: linear-gradient(to top, rgba(0,0,0,0.7), transparent 60%);
   }
+  .gallery-card:hover .overlay { opacity: 1; }
   .gallery-card .overlay span {
     @apply text-[10px] text-white/80 truncate font-mono;
   }
@@ -178,7 +180,6 @@ import Layout from '../layouts/Layout.astro';
 
 <script>
   let activeMode = 'crawl';
-  let lastUrl = '';
   let currentFilename = 'output.txt';
   let galleryImages: { src: string; alt: string }[] = [];
   let galleryPage = 0;
@@ -259,7 +260,6 @@ import Layout from '../layouts/Layout.astro';
         body: JSON.stringify({ url, mode: activeMode })
       });
       const data = await resp.json();
-      lastUrl = url;
       currentFilename = genFilename(url, activeMode);
 
       if (data.error) {
@@ -306,7 +306,7 @@ import Layout from '../layouts/Layout.astro';
     const pageImages = galleryImages.slice(start, start + IMAGES_PER_PAGE);
     galleryGrid.innerHTML = '';
 
-    pageImages.forEach((img, i) => {
+    pageImages.forEach((img) => {
       const card = document.createElement('div');
       card.className = 'gallery-card';
       card.innerHTML = `
