@@ -151,16 +151,17 @@ import Layout from '../layouts/Layout.astro';
   }
   .gallery-card:hover img { transform: scale(1.05); }
   .gallery-card .overlay {
-    @apply absolute inset-0 flex items-end p-2 opacity-0 transition-opacity;
-    background: linear-gradient(to top, rgba(0,0,0,0.7), transparent 60%);
+    @apply absolute inset-x-0 bottom-0 flex items-end p-2 opacity-0 transition-opacity;
+    background: linear-gradient(to top, rgba(0,0,0,0.7), transparent 100%);
   }
   .gallery-card:hover .overlay { opacity: 1; }
   .gallery-card .overlay span {
     @apply text-[10px] text-white/80 truncate font-mono;
   }
   .dl-img-btn {
-    @apply shrink-0 ml-2 w-7 h-7 flex items-center justify-center rounded-lg bg-white/20 hover:bg-white/30 text-white text-xs transition-colors backdrop-blur-sm;
+    @apply absolute top-2 right-2 z-10 w-8 h-8 flex items-center justify-center rounded-lg bg-black/50 hover:bg-blue-600 text-white text-sm transition-all backdrop-blur-sm shadow-lg cursor-pointer;
   }
+  .dl-img-btn:hover { transform: scale(1.1); }
   .page-btn {
     @apply px-3 py-1.5 rounded-lg text-sm font-medium transition-colors;
   }
@@ -350,9 +351,9 @@ import Layout from '../layouts/Layout.astro';
       if (!safeSrc) return; // skip images with invalid URLs
       card.innerHTML = `
         <img src="${safeSrc}" alt="${safeAlt}" loading="lazy" onerror="this.parentElement.style.display='none'" />
+        <button class="dl-img-btn" title="Download image">⬇</button>
         <div class="overlay">
           <span class="flex-1">${safeAlt || safeName}</span>
-          <button class="dl-img-btn" title="Download image">⬇</button>
         </div>
       `;
       const dlBtn = card.querySelector('.dl-img-btn')!;
